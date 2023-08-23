@@ -1,0 +1,128 @@
+#!/bin/bash
+
+### 
+### github.com/aramcap/sumcontrol
+### 
+
+FOLDER=files
+
+function get_last_state () {
+  if [ -f "sumcontrol_history" ]; then
+    sed '1s/^-----.*//;:a;N;$!ba;s/-----.*//g;s/\n$//;s/\nNew files.*\n\n//' sumcontrol_history > sumcontrol_last_state
+  fi
+}
+
+function new_history () {
+  echo "----- $(date) - $(hostname) -----" >> sumcontrol_history
+
+  echo "New files: 0" >> sumcontrol_history
+  echo "Changed files: 0" >> sumcontrol_history
+  echo "Deleted files: 0" >> sumcontrol_history
+
+  echo "" >> sumcontrol_history
+
+  cat sumcontrol_new_state >> sumcontrol_history
+}
+
+function update_history () {
+  mv sumcontrol_history sumcontrol_history_tmp
+
+  echo "----- $(date) - $(hostname) -----" >> sumcontrol_history
+
+  echo "New files: $1" >> sumcontrol_history
+  if (( $1 != 0 )); then
+    cat sumcontrol_new_files >> sumcontrol_history
+  fi
+
+  echo "Changed files: $2" >> sumcontrol_history
+  if (( $2 != 0 )); then
+    cat sumcontrol_changed_files >> sumcontrol_history
+  fi
+  
+  echo "Deleted files: $3" >> sumcontrol_history
+  if (( $3 != 0 )); then
+    cat sumcontrol_deleted_files >> sumcontrol_history
+  fi
+
+  echo "" >> sumcontrol_history
+
+  cat sumcontrol_new_state sumcontrol_history_tmp >> sumcontrol_history
+  rm -f sumcontrol_history_tmp
+}
+
+function generate_state () {
+  # New global state
+  find ${FOLDER}/* -exec sha256sum {} \; 2> /dev/null > sumcontrol_new_state
+  
+  if [ -f "sumcontrol_last_state" ]; then
+    # New and changed files state
+    diff --unchanged-line-format="" --old-line-format="" --new-line-format="%L" sumcontrol_last_state sumcontrol_new_state | sed 's|^.*  ||g' > sumcontrol_new_changed_state
+    # Deleted and changed files state
+    diff --unchanged-line-format="" --old-line-format="%L" --new-line-format="" sumcontrol_last_state sumcontrol_new_state | sed 's|^.*  ||g' > sumcontrol_deleted_changed_state
+  fi
+}
+
+function identify_new_files () {
+  diff --unchanged-line-format="" --old-line-format="" --new-line-format="%L" sumcontrol_deleted_changed_state sumcontrol_new_changed_state > sumcontrol_new_files
+}
+
+function identify_changed_files () {
+  diff --unchanged-line-format="%L" --old-line-format="" --new-line-format="" sumcontrol_deleted_changed_state sumcontrol_new_changed_state > sumcontrol_changed_files
+}
+
+function identify_deleted_files () {
+  diff --unchanged-line-format="" --old-line-format="%L" --new-line-format="" sumcontrol_deleted_changed_state sumcontrol_new_changed_state > sumcontrol_deleted_files
+}
+
+function check_folder () {
+  if [ ! -e ${FOLDER} ]; then
+    echo "Path ${FOLDER} not exists or not has content"
+    exit 1
+  fi
+}
+
+# Check if folder exists
+check_folder
+
+if [ -f "sumcontrol_history" ]; then
+  # Get last state
+  get_last_state
+
+  # Get new state
+  generate_state
+
+  # Identify new, changed and deleted files
+  identify_new_files
+  identify_changed_files
+  identify_deleted_files
+  if [ -f "sumcontrol_new_files" ]; then
+    NUM_NEW_FILES=$(cat sumcontrol_new_files | wc -l)
+  else
+    NUM_NEW_FILES=0
+  fi
+  if [ -f "sumcontrol_changed_files" ]; then
+    NUM_CHANGED_FILES=$(cat sumcontrol_changed_files | wc -l)
+  else
+    NUM_CHANGED_FILES=0
+  fi
+  if [ -f "sumcontrol_deleted_files" ]; then
+    NUM_DELETED_FILES=$(cat sumcontrol_deleted_files | wc -l)
+  else
+    NUM_DELETED_FILES=0
+  fi
+
+  update_history ${NUM_NEW_FILES} ${NUM_CHANGED_FILES} ${NUM_DELETED_FILES}
+
+  rm -f sumcontrol_last_state
+
+  rm -f sumcontrol_new_state sumcontrol_new_changed_state sumcontrol_deleted_changed_state sumcontrol_new_files sumcontrol_changed_files sumcontrol_deleted_files
+else
+  # Get new state
+  generate_state
+
+  new_history
+
+  rm -f sumcontrol_new_state
+fi
+
+
